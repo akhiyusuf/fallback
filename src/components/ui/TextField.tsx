@@ -39,7 +39,9 @@ export function TextField({
             backgroundColor: colors.surfaceAlt,
             borderRadius: radius.sm,
             borderWidth: 1,
-            borderColor: error ? colors.danger : 'transparent',
+            // A visible default border keeps the input findable on tinted
+            // cards (e.g. the amber fallback panel) where surfaceAlt blends in.
+            borderColor: error ? colors.danger : colors.border,
             paddingHorizontal: spacing.md,
             paddingVertical: 10,
             fontSize: 15,

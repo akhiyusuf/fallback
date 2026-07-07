@@ -56,7 +56,7 @@ export default function RoutinesScreen() {
 
   const [selected, setSelected] = useState<string>(() => todayKey());
   const [calendarVisible, setCalendarVisible] = useState(false);
-  const [categoryIndex, setCategoryIndex] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // Keep the rolling task window generated for whatever date is viewed.
   useEffect(() => {
@@ -93,22 +93,26 @@ export default function RoutinesScreen() {
     return [null, ...present];
   }, [dayItems]);
 
-  // Clamp the cursor so it stays valid when the category list shrinks.
-  const safeIndex =
-    categories.length > 0
-      ? ((categoryIndex % categories.length) + categories.length) %
-        categories.length
-      : 0;
-  const category = categories[safeIndex] ?? null;
+  // The cursor is the tag NAME, not a position: when the selected day changes
+  // and the tag isn't present there, fall back to All instead of silently
+  // remapping onto whatever tag happens to share the old index.
+  const category =
+    selectedCategory !== null && categories.includes(selectedCategory)
+      ? selectedCategory
+      : null;
 
   const cycleCategory = useCallback(
     (step: 1 | -1) => {
-      setCategoryIndex(
-        (i) => (((i + step) % categories.length) + categories.length) %
-          categories.length
-      );
+      setSelectedCategory((prev) => {
+        const active = prev !== null && categories.includes(prev) ? prev : null;
+        const current = categories.indexOf(active);
+        return (
+          categories[(current + step + categories.length) % categories.length] ??
+          null
+        );
+      });
     },
-    [categories.length]
+    [categories]
   );
 
   // A category matches either tag of the parent commitment.

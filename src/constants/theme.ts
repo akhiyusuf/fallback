@@ -65,7 +65,9 @@ export const lightColors: ThemeColors = {
   onPrimary: '#FFFFFF',
   primarySoft: '#E4F1E9',
 
-  fallback: '#B97F24',
+  // Dark enough for 4.5:1 text on fallbackSoft/white (the fallback-variant
+  // button label and sub line are body-size text).
+  fallback: '#8F621B',
   onFallback: '#FFFFFF',
   fallbackSoft: '#F8ECD4',
 

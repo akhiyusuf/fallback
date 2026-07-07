@@ -119,8 +119,10 @@ export default function EventsScreen() {
   const visibleEvents = eventItems.filter(matchesCategory);
   const visibleDeadlines = deadlineItems.filter(matchesCategory);
 
+  // Day summary over ALL of the day's items (not just the filtered view) —
+  // same semantics as the Routines tab's counter.
   const { done, total } = dayCompletion(
-    [...visibleEvents, ...visibleDeadlines].map((i) => i.task)
+    [...eventItems, ...deadlineItems].map((i) => i.task)
   );
 
   const cycleCategory = (dir: 1 | -1) => {

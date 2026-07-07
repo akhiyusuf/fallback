@@ -80,10 +80,15 @@ function cleanSteps(steps: Step[]): Step[] {
   return steps
     .map((s) => {
       const badge = s.badge?.trim();
+      // A weekly step with no weekdays would never be due anywhere and
+      // silently vanish from every checklist — treat it as daily instead.
+      const weeklyWithoutDays =
+        s.frequency === 'weekly' && (s.targetDays?.length ?? 0) === 0;
       return {
         ...s,
         title: s.title.trim(),
         badge: badge ? badge : undefined,
+        frequency: weeklyWithoutDays ? ('daily' as const) : s.frequency,
       };
     })
     .filter((s) => s.title.length > 0);
@@ -231,13 +236,10 @@ function PickerRow({
     onValue(mode === 'time' ? toTimeString(d) : toDateKey(d));
   };
 
-  const open = () => {
-    // What the picker shows becomes the value, even without a change event.
-    if (value == null) {
-      onValue(mode === 'time' ? DEFAULT_TIME : todayKey());
-    }
-    onOpen();
-  };
+  // Never pre-commit the placeholder the picker opens on: a value is only
+  // set from an actual change event, so cancelling (Android dialog) or
+  // closing the iOS inline picker untouched leaves the field unset.
+  const open = onOpen;
 
   return (
     <View>
@@ -767,8 +769,9 @@ export default function EditScreen() {
                   setHasDeadline(v);
                   if (!v && activePicker === 'deadline') setActivePicker(null);
                 }}
-                trackColor={{ false: colors.surfaceAlt, true: colors.primary }}
+                trackColor={{ false: colors.borderStrong, true: colors.primary }}
                 thumbColor={colors.surface}
+                ios_backgroundColor={colors.borderStrong}
                 accessibilityLabel="Has deadline"
               />
             </View>

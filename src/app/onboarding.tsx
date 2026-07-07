@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton, Screen } from '@/components/ui';
 import { useApp, useTheme } from '@/store/AppContext';
@@ -70,6 +71,7 @@ function ValueRow({
 export default function OnboardingScreen() {
   const { data, completeOnboarding } = useApp();
   const { colors, spacing, radius, type } = useTheme();
+  const insets = useSafeAreaInsets();
 
   if (data.hasCompletedOnboarding) {
     return <Redirect href="/(tabs)" />;
@@ -144,7 +146,9 @@ export default function OnboardingScreen() {
         onPress={onGetStarted}
         variant="primary"
         size="lg"
-        style={{ marginBottom: spacing.xxl }}
+        // Screen only pads the top edge; keep the CTA clear of the home
+        // indicator / gesture bar.
+        style={{ marginBottom: spacing.xxl + insets.bottom }}
       />
     </Screen>
   );

@@ -28,6 +28,9 @@ export function Screen({ children, scroll = false, padded = true }: ScreenProps)
           style={styles.flex}
           contentContainerStyle={[padding, { paddingBottom: theme.spacing.xxl }]}
           keyboardShouldPersistTaps="handled"
+          // iOS does not auto-scroll focused inputs into view; Android's
+          // resize soft-input mode makes this a no-op there.
+          automaticallyAdjustKeyboardInsets
           showsVerticalScrollIndicator={false}
         >
           {children}

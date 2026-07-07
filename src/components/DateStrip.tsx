@@ -21,6 +21,7 @@ import {
 import { IconButton } from '@/components/ui';
 import {
   addDays,
+  daysBetween,
   formatDisplayDate,
   parseDateKey,
   todayKey,
@@ -126,11 +127,16 @@ export function DateStrip({ selected, onSelect, onOpenCalendar }: DateStripProps
   const today = todayKey();
 
   const keys = useMemo(() => {
-    const start = addDays(today, -DAYS_AROUND);
+    // Anchor on today normally; when the month calendar picks a date beyond
+    // the ±30-day window, re-anchor around the selection so the strip can
+    // still render and center it (otherwise no cell would appear selected).
+    const anchor =
+      Math.abs(daysBetween(today, selected)) <= DAYS_AROUND ? today : selected;
+    const start = addDays(anchor, -DAYS_AROUND);
     return Array.from({ length: DAYS_AROUND * 2 + 1 }, (_, i) =>
       addDays(start, i)
     );
-  }, [today]);
+  }, [today, selected]);
 
   const listRef = useRef<FlatList<string>>(null);
 

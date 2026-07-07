@@ -1,9 +1,15 @@
+'use no memo';
 /**
  * Android home-screen widget UI for today's tasks.
  *
  * Pure react-native-android-widget markup — no hooks, no react-native
  * imports. Colors come from the shared theme tokens via `getTheme(dark)`
  * (widgets render outside the app, so useTheme() is unavailable).
+ *
+ * The 'use no memo' directive is load-bearing: the React Compiler
+ * (app.json experiments.reactCompiler) would otherwise inject a memo-cache
+ * hook call, and react-native-android-widget invokes this component as a
+ * plain function outside any React render, which would throw.
  */
 
 import React from 'react';
@@ -48,6 +54,7 @@ export function TodayWidget(props: TodayWidgetProps): React.JSX.Element {
 
   return (
     <FlexWidget
+      clickAction="OPEN_APP"
       style={{
         width: 'match_parent',
         height: 'match_parent',

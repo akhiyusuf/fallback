@@ -35,6 +35,7 @@ import {
   clearAppData,
   createDefaultAppData,
   loadAppData,
+  loadAppDataStrict,
   saveAppData,
 } from '@/lib/storage';
 import { stepDueOnDate, syncTasksForDates } from '@/lib/taskGeneration';
@@ -56,6 +57,8 @@ export interface AppStore {
   data: AppData;
   theme: Theme;
   score30: number | null;
+  /** Today's 'YYYY-MM-DD' key, kept current across midnight rollovers. */
+  today: string;
 
   addCommitment(input: NewCommitmentInput): void;
   updateCommitment(id: string, patch: Partial<Commitment>): void;
@@ -105,12 +108,18 @@ function copySteps(steps: Step[]): Step[] {
   }));
 }
 
-/** Re-runs the task reconciler over [today .. today+6]. */
-function withSyncedTasks(data: AppData): AppData {
-  const today = todayKey();
-  const keys = dateKeysBetween(today, addDays(today, 6));
-  const { tasks, changed } = syncTasksForDates(data, keys, today);
-  return changed ? { ...data, tasks } : data;
+/** ms until just past the next local midnight. */
+function msUntilNextMidnight(): number {
+  const now = new Date();
+  const next = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0,
+    0,
+    2
+  );
+  return Math.max(1000, next.getTime() - now.getTime());
 }
 
 export function AppProvider(props: {
@@ -118,13 +127,37 @@ export function AppProvider(props: {
 }): React.ReactElement {
   const [data, setDataState] = useState<AppData>(() => createDefaultAppData());
   const [ready, setReady] = useState(false);
+  // Held in state (not read ad hoc) so a midnight rollover re-renders every
+  // consumer and the 30-day score window shifts without an app restart.
+  const [today, setToday] = useState<string>(() => todayKey());
 
   // Ref mirrors so debounced callbacks never see stale state.
   const dataRef = useRef<AppData>(data);
   const readyRef = useRef(false);
+  const todayRef = useRef(today);
+  // The most recently viewed/ensured date — commitment mutations re-sync this
+  // window too, so edits made while viewing a far-future day show up there.
+  const lastEnsuredRef = useRef<string | null>(null);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Re-runs the task reconciler over [today .. today+6] plus, when the user
+   * has viewed a date outside that window, [viewed .. viewed+6].
+   */
+  const syncWindows = useCallback((prev: AppData): AppData => {
+    const t = todayRef.current;
+    const keys = new Set(dateKeysBetween(t, addDays(t, 6)));
+    const ensured = lastEnsuredRef.current;
+    if (ensured && !keys.has(ensured)) {
+      for (const k of dateKeysBetween(ensured, addDays(ensured, 6))) {
+        keys.add(k);
+      }
+    }
+    const { tasks, changed } = syncTasksForDates(prev, [...keys], t);
+    return changed ? { ...prev, tasks } : prev;
+  }, []);
 
   // ---------- persistence & side effects ----------
 
@@ -186,24 +219,44 @@ export function AppProvider(props: {
   const reloadFromDisk = useCallback(async () => {
     // Persist anything still pending before re-reading disk.
     flushSave();
+    const before = dataRef.current;
     try {
-      const loaded = await loadAppData();
-      const synced = withSyncedTasks(loaded);
+      const loaded = await loadAppDataStrict();
+      // A mutation landed while the read was in flight — keep the newer
+      // in-memory state (its save is already scheduled) instead of silently
+      // reverting the user's action to the older disk snapshot.
+      if (dataRef.current !== before) return;
+      // Never adopt an empty-default blob over real in-memory data: this app
+      // is the only writer, so "disk empty, memory populated" can only mean
+      // a bad read — adopting it (and then saving) would wipe everything.
+      const cur = dataRef.current;
+      const loadedEmpty =
+        loaded.commitments.length === 0 &&
+        loaded.tasks.length === 0 &&
+        loaded.todoBucket.length === 0 &&
+        !loaded.hasCompletedOnboarding;
+      const curHasContent =
+        cur.commitments.length > 0 ||
+        cur.tasks.length > 0 ||
+        cur.todoBucket.length > 0 ||
+        cur.hasCompletedOnboarding;
+      if (loadedEmpty && curHasContent) return;
+      const synced = syncWindows(loaded);
       dataRef.current = synced;
       setDataState(synced);
       if (synced !== loaded) scheduleSave();
       scheduleSideEffects();
     } catch {
-      // keep in-memory state on any failure
+      // read failed — keep the known-good in-memory state
     }
-  }, [flushSave, scheduleSave, scheduleSideEffects]);
+  }, [flushSave, scheduleSave, scheduleSideEffects, syncWindows]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const loaded = await loadAppData();
       if (cancelled) return;
-      const synced = withSyncedTasks(loaded);
+      const synced = syncWindows(loaded);
       dataRef.current = synced;
       setDataState(synced);
       readyRef.current = true;
@@ -211,6 +264,16 @@ export function AppProvider(props: {
       if (synced !== loaded) scheduleSave();
       // Refresh notifications/widgets on every cold start (date rollover).
       scheduleSideEffects();
+      // Reminders default ON: returning users must get the OS permission
+      // prompt without ever touching the toggle (fresh installs get it from
+      // completeOnboarding instead, after the intro screen).
+      if (synced.settings.remindersEnabled && synced.hasCompletedOnboarding) {
+        try {
+          void ensurePermissions().catch(() => {});
+        } catch {
+          // permissions are best-effort
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -224,12 +287,28 @@ export function AppProvider(props: {
       if (state === 'background' || state === 'inactive') {
         flushSave();
       } else if (state === 'active') {
+        setToday(todayKey());
         void reloadFromDisk();
       }
     };
     const sub = AppState.addEventListener('change', onChange);
     return () => sub.remove();
   }, [flushSave, reloadFromDisk]);
+
+  // Keep `today` current while the app stays in the foreground: fire just
+  // past each local midnight, then re-sync windows and side effects.
+  useEffect(() => {
+    todayRef.current = today;
+    const timer = setTimeout(() => setToday(todayKey()), msUntilNextMidnight());
+    return () => clearTimeout(timer);
+  }, [today]);
+
+  useEffect(() => {
+    if (!readyRef.current) return;
+    setData((prev) => syncWindows(prev));
+    scheduleSideEffects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [today]);
 
   // Flush any pending save if the provider ever unmounts.
   useEffect(() => {
@@ -249,7 +328,7 @@ export function AppProvider(props: {
           id: newId('commitment'),
           createdAt: new Date().toISOString(),
         };
-        return withSyncedTasks({
+        return syncWindows({
           ...prev,
           commitments: [...prev.commitments, commitment],
         });
@@ -265,7 +344,7 @@ export function AppProvider(props: {
         if (idx < 0) return prev;
         const commitments = prev.commitments.slice();
         commitments[idx] = { ...commitments[idx], ...patch, id };
-        return withSyncedTasks({ ...prev, commitments });
+        return syncWindows({ ...prev, commitments });
       });
     },
     [setData]
@@ -275,7 +354,7 @@ export function AppProvider(props: {
     (id: string) => {
       setData((prev) => {
         if (!prev.commitments.some((c) => c.id === id)) return prev;
-        return withSyncedTasks({
+        return syncWindows({
           ...prev,
           commitments: prev.commitments.filter((c) => c.id !== id),
         });
@@ -299,7 +378,7 @@ export function AppProvider(props: {
           targetDays: src.targetDays ? [...src.targetDays] : undefined,
           targetTimes: src.targetTimes ? [...src.targetTimes] : undefined,
         };
-        return withSyncedTasks({
+        return syncWindows({
           ...prev,
           commitments: [...prev.commitments, copy],
         });
@@ -318,9 +397,14 @@ export function AppProvider(props: {
 
   const ensureTasksFor = useCallback(
     (dateKey: string) => {
+      lastEnsuredRef.current = dateKey;
       setData((prev) => {
         const keys = dateKeysBetween(dateKey, addDays(dateKey, 6));
-        const { tasks, changed } = syncTasksForDates(prev, keys, todayKey());
+        const { tasks, changed } = syncTasksForDates(
+          prev,
+          keys,
+          todayRef.current
+        );
         return changed ? { ...prev, tasks } : prev;
       });
     },
@@ -523,6 +607,15 @@ export function AppProvider(props: {
         ? prev
         : { ...prev, hasCompletedOnboarding: true }
     );
+    // First entry into the app: reminders default ON, so this is the moment
+    // to surface the OS notification-permission prompt.
+    if (dataRef.current.settings.remindersEnabled) {
+      try {
+        void ensurePermissions().catch(() => {});
+      } catch {
+        // permissions are best-effort
+      }
+    }
   }, [setData]);
 
   const wipeAll = useCallback(async () => {
@@ -553,8 +646,8 @@ export function AppProvider(props: {
   );
 
   const score30 = useMemo(
-    () => disciplineScore(data.tasks, todayKey()),
-    [data.tasks]
+    () => disciplineScore(data.tasks, today),
+    [data.tasks, today]
   );
 
   const store = useMemo<AppStore>(
@@ -563,6 +656,7 @@ export function AppProvider(props: {
       data,
       theme,
       score30,
+      today,
       addCommitment,
       updateCommitment,
       deleteCommitment,
@@ -587,6 +681,7 @@ export function AppProvider(props: {
       data,
       theme,
       score30,
+      today,
       addCommitment,
       updateCommitment,
       deleteCommitment,

@@ -10,7 +10,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { TAG_COLOR_CHOICES } from '@/constants/theme';
-import { parseDateKey } from '@/lib/dates';
+import { parseDateKey, toDateKey } from '@/lib/dates';
 import { newId } from '@/lib/ids';
 import {
   AppData,
@@ -57,7 +57,9 @@ const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 function sanitizeDateKey(v: unknown): string | null {
   if (typeof v !== 'string' || !DATE_KEY_RE.test(v)) return null;
   const d = parseDateKey(v);
-  return isNaN(d.getTime()) ? null : v;
+  // Round-trip: new Date(y, m, d) rolls invalid components over (e.g.
+  // '2026-02-31' → Mar 3), so re-formatting must reproduce the input.
+  return !isNaN(d.getTime()) && toDateKey(d) === v ? v : null;
 }
 
 /** Valid 'HH:mm' (normalized, zero-padded) or null. */
@@ -368,6 +370,18 @@ export async function loadAppData(): Promise<AppData> {
   } catch {
     return createDefaultAppData();
   }
+}
+
+/**
+ * Like loadAppData, but a failed read or unparseable blob RETHROWS instead of
+ * returning defaults; only a genuinely missing key yields defaults. Used by
+ * the foreground reload so a transient native read failure (or one corrupt
+ * read) can never swap known-good in-memory data for empty defaults.
+ */
+export async function loadAppDataStrict(): Promise<AppData> {
+  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  if (raw === null) return createDefaultAppData();
+  return migrateAppData(JSON.parse(raw));
 }
 
 export async function saveAppData(data: AppData): Promise<void> {
