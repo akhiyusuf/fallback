@@ -16,7 +16,7 @@
  */
 
 import DateTimePicker, {
-  type DateTimePickerChangeEvent,
+  type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -300,20 +300,22 @@ function PickerRow({
           display={mode === 'time' ? 'spinner' : 'inline'}
           themeVariant={theme.dark ? 'dark' : 'light'}
           accentColor={colors.primary}
-          onValueChange={(_e: DateTimePickerChangeEvent, d: Date) =>
-            commitDate(d)
-          }
+          // iOS inline picker streams changes as the user scrolls.
+          onChange={(_e: DateTimePickerEvent, d?: Date) => {
+            if (d) commitDate(d);
+          }}
         />
       ) : null}
       {active && Platform.OS === 'android' ? (
         <DateTimePicker
           mode={mode}
           value={pickerValue}
-          onValueChange={(_e: DateTimePickerChangeEvent, d: Date) => {
+          // Android fires once: type 'set' with a date, or 'dismissed' on
+          // cancel (no date) — so cancelling never commits a value.
+          onChange={(e: DateTimePickerEvent, d?: Date) => {
             onClose();
-            commitDate(d);
+            if (e.type === 'set' && d) commitDate(d);
           }}
-          onDismiss={onClose}
         />
       ) : null}
     </View>
